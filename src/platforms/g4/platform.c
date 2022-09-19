@@ -25,6 +25,7 @@
 #include "usb.h"
 #include "aux_serial.h"
 
+#include <libopencm3/stm32/g4/adc.h>
 #include <libopencm3/stm32/g4/rcc.h>
 #include <libopencm3/cm3/scb.h>
 #include <libopencm3/cm3/nvic.h>
@@ -34,6 +35,8 @@
 #include <libopencm3/stm32/flash.h>
 
 extern uint32_t _ebss[];
+
+static void adc_init(void);
 
 void platform_init(void)
 {
@@ -61,7 +64,7 @@ void platform_init(void)
 	rcc_periph_clock_enable(RCC_GPIOA);
 	rcc_periph_clock_enable(RCC_GPIOB);
 	rcc_periph_clock_enable(RCC_CRC);
-
+	adc_init();
 	/* Disconnect USB after reset:
 	 * Pull USB_DP low. Device will reconnect automatically
 	 * when USB is set up later, as Pull-Up is hard wired*/
@@ -100,9 +103,25 @@ bool platform_nrst_get_val(void)
 	return (gpio_get(NRST_SENSE_PORT, NRST_SENSE_PIN)) != 0;
 }
 
+uint32_t platform_target_voltage_sense(void)
+{
+	const uint8_t channel = 2;
+	adc_set_regular_sequence(ADC1, 1, (uint8_t*)&channel);
+	adc_start_conversion_regular(ADC1);
+	/* Wait for end of conversion. */
+	while (!adc_eoc(ADC1));
+	uint32_t val = adc_read_regular(ADC1); /* 0-4095 */
+	return (val * 97) / 8190;
+}
+
 const char *platform_target_voltage(void)
 {
-	return "ABSENT!";
+	static char ret[] = "0.0V";
+	uint32_t val = platform_target_voltage_sense();
+	ret[0] = '0' + val / 10;
+	ret[2] = '0' + val % 10;
+
+	return ret;
 }
 
 void platform_request_boot(void)
@@ -117,4 +136,18 @@ void platform_request_boot(void)
 void platform_target_clk_output_enable(bool enable)
 {
 	(void)enable;
+}
+
+static void adc_init(void)
+{
+	rcc_periph_clock_enable(RCC_ADC1);
+	RCC_CCIPR |= RCC_CCIPR_ADC12_SYS << RCC_CCIPR_ADC12_SHIFT;
+	adc_disable_deeppwd(ADC1);
+	adc_enable_regulator(ADC1);
+	for (int i = 0; i < 200000; i++)
+		__asm__("nop");
+	adc_power_off(ADC1);
+	adc_calibrate(ADC1);
+	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_247DOT5CYC);
+	adc_power_on(ADC1);
 }
