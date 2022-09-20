@@ -18,10 +18,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4)
+#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4) || defined(STM32G4)
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/stm32/dma.h>
+#if defined(STM32G4)
+#include <libopencm3/stm32/dmamux.h>
+
+#endif
 #include <libopencm3/cm3/cortex.h>
 #elif defined(LM4F)
 #include <libopencm3/lm4f/rcc.h>
@@ -43,7 +47,7 @@ static uint8_t aux_serial_receive_write_index = 0;
 /* Fifo out pointer, writes assumed to be atomic, should be only incremented outside RX ISR */
 static uint8_t aux_serial_receive_read_index = 0;
 
-#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4)
+#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4) || defined(STM32G4)
 static char aux_serial_transmit_buffer[2U][AUX_UART_BUFFER_SIZE];
 static uint8_t aux_serial_transmit_buffer_index = 0;
 static uint8_t aux_serial_transmit_buffer_consumed = 0;
@@ -169,6 +173,73 @@ void aux_serial_init(void)
 	usart_enable_tx_dma(USBUSART);
 	usart_enable_rx_dma(USBUSART);
 }
+#elif defined(STM32G4)
+void aux_serial_init(void)
+{
+/* Enable clocks */
+	rcc_periph_clock_enable(USBUSART_CLK);
+	rcc_periph_clock_enable(USBUSART_DMA_CLK);
+	rcc_periph_clock_enable(RCC_DMAMUX1);
+
+	/* Setup UART parameters */
+	UART_PIN_SETUP();
+	usart_set_baudrate(USBUSART, 38400);
+	usart_set_databits(USBUSART, 8);
+	usart_set_stopbits(USBUSART, USART_STOPBITS_1);
+	usart_set_mode(USBUSART, USART_MODE_TX_RX);
+	usart_set_parity(USBUSART, USART_PARITY_NONE);
+	usart_set_flow_control(USBUSART, USART_FLOWCONTROL_NONE);
+	USART_CR1(USBUSART) |= USART_CR1_IDLEIE;
+
+	/* Setup USART TX DMA */
+
+	dma_channel_reset(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN);
+	dma_set_peripheral_address(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN, (uint32_t)&USBUSART_TDR);
+	dma_enable_memory_increment_mode(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN);
+	dma_set_peripheral_size(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN, DMA_PSIZE_8BIT);
+	dma_set_memory_size(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN, DMA_MSIZE_8BIT);
+	dma_set_priority(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN, DMA_PL_HIGH);
+	dma_enable_transfer_complete_interrupt(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN);
+	dma_set_read_from_memory(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN);
+
+	/* Setup USART RX DMA */
+	dma_channel_reset(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN);
+	dma_set_peripheral_address(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN, (uint32_t)&USBUSART_RDR);
+	dma_set_memory_address(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN, (uint32_t)aux_serial_receive_buffer);
+	dma_set_number_of_data(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN, AUX_UART_BUFFER_SIZE);
+	dma_enable_memory_increment_mode(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN);
+	dma_enable_circular_mode(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN);
+	dma_set_peripheral_size(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN, DMA_PSIZE_8BIT);
+	dma_set_memory_size(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN, DMA_MSIZE_8BIT);
+	dma_set_priority(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN, DMA_PL_HIGH);
+	dma_enable_half_transfer_interrupt(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN);
+	dma_enable_transfer_complete_interrupt(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN);
+	dma_set_read_from_peripheral(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN);
+
+	dmamux_set_dma_channel_request(DMAMUX1, DMA_CHANNEL1, DMAMUX_CxCR_DMAREQ_ID_UART1_RX);
+	dma_enable_channel(USBUSART_DMA_BUS, USBUSART_DMA_RX_CHAN);
+
+	/* Enable interrupts */
+	nvic_set_priority(USBUSART_IRQ, IRQ_PRI_USBUSART);
+#if defined(USBUSART_DMA_RXTX_IRQ)
+	nvic_set_priority(USBUSART_DMA_RXTX_IRQ, IRQ_PRI_USBUSART_DMA);
+#else
+	nvic_set_priority(USBUSART_DMA_TX_IRQ, IRQ_PRI_USBUSART_DMA);
+	nvic_set_priority(USBUSART_DMA_RX_IRQ, IRQ_PRI_USBUSART_DMA);
+#endif
+	nvic_enable_irq(USBUSART_IRQ);
+#if defined(USBUSART_DMA_RXTX_IRQ)
+	nvic_enable_irq(USBUSART_DMA_RXTX_IRQ);
+#else
+	nvic_enable_irq(USBUSART_DMA_TX_IRQ);
+	nvic_enable_irq(USBUSART_DMA_RX_IRQ);
+#endif
+
+	/* Finally enable the USART */
+	usart_enable(USBUSART);
+	usart_enable_tx_dma(USBUSART);
+	usart_enable_rx_dma(USBUSART);
+}
 #elif defined(LM4F)
 void aux_serial_init(void)
 {
@@ -212,7 +283,7 @@ void aux_serial_set_encoding(struct usb_cdc_line_coding *coding)
 {
 	usart_set_baudrate(USBUSART, coding->dwDTERate);
 
-#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4)
+#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4) || defined(STM32G4)
 	if (coding->bParityType)
 		usart_set_databits(USBUSART, (coding->bDataBits + 1 <= 8 ? 8 : 9));
 	else
@@ -248,7 +319,7 @@ void aux_serial_set_encoding(struct usb_cdc_line_coding *coding)
 	}
 }
 
-#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4)
+#if defined(STM32F0) || defined(STM32F1) || defined(STM32F3) || defined(STM32F4) || defined(STM32G4)
 void aux_serial_set_led(const aux_serial_led_e led)
 {
 	aux_serial_led_state |= led;
@@ -281,6 +352,9 @@ void aux_serial_switch_transmit_buffers(void)
 	/* Make the buffer we've been filling the active DMA buffer, and swap to the other */
 	dma_set_memory_address(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN, (uintptr_t)aux_serial_current_transmit_buffer());
 	dma_set_number_of_data(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN, aux_serial_transmit_buffer_consumed);
+#ifdef USBUSART_DMAMUX
+	dmamux_set_dma_channel_request(USBUSART_DMAMUX, USBUSART_DMA_TX_CHAN, USBUSART_DMAMUX_TX_REQ);
+#endif
 	dma_enable_channel(USBUSART_DMA_BUS, USBUSART_DMA_TX_CHAN);
 
 	/* Change active buffer */
