@@ -156,6 +156,7 @@
 						USBUSART_TX_PIN | USBUSART_RX_PIN);				\
 		gpio_set_af(USBUSART_PORT, GPIO_AF7,							\
 					USBUSART_TX_PIN | USBUSART_RX_PIN);					\
+		USART_CR2(USBUSART) |= USART_CR2_SWAP;									\
 	} while(0)
 
 #define TRACE_TIM TIM3
