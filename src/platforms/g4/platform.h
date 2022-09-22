@@ -27,9 +27,8 @@
 #include "timing.h"
 #include "timing_stm32.h"
 
-#include <setjmp.h>
-
 //#define PLATFORM_HAS_TRACESWO
+#define PLATFORM_HAS_POWER_SWITCH
 
 #ifdef ENABLE_DEBUG
 # define PLATFORM_HAS_DEBUG
@@ -86,6 +85,8 @@
 #define NRST_SENSE_PORT	GPIOB
 #define NRST_SENSE_PIN	GPIO0
 
+#define PWR_BR_PORT GPIOA
+#define PWR_BR_PIN GPIO8
 
 #define LED_PORT	GPIOB
 #define LED_PORT_UART	LED_PORT
@@ -94,9 +95,6 @@
 #define LED_ERROR	GPIO7
 /* PORTB does not stay active in system bootloader!*/
 #define LED_BOOTLOADER	GPIO6
-
-#define BOOTMAGIC0 0xb007da7a
-#define BOOTMAGIC1 0xbaadfeed
 
 #define TMS_SET_MODE() \
 	do {                                                                    \
@@ -182,10 +180,36 @@ static inline int platform_hwversion(void)
 	return 0;
 }
 
-/* Use newlib provided integer only stdio functions */
-#define sscanf siscanf
-#define sprintf siprintf
-#define vasprintf vasiprintf
-#define snprintf sniprintf
+/*
+ * Use newlib provided integer only stdio functions
+ */
 
+/* sscanf */
+#ifdef sscanf
+#undef sscanf
+#define sscanf siscanf
+#else
+#define sscanf siscanf
+#endif
+/* sprintf */
+#ifdef sprintf
+#undef sprintf
+#define sprintf siprintf
+#else
+#define sprintf siprintf
+#endif
+/* vasprintf */
+#ifdef vasprintf
+#undef vasprintf
+#define vasprintf vasiprintf
+#else
+#define vasprintf vasiprintf
+#endif
+/* snprintf */
+#ifdef snprintf
+#undef snprintf
+#define snprintf sniprintf
+#else
+#define snprintf sniprintf
+#endif
 #endif

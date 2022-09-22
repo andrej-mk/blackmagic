@@ -82,6 +82,10 @@ void platform_init(void)
 	gpio_mode_setup(NRST_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, NRST_PIN);
 	gpio_set_output_options(NRST_PORT, GPIO_OTYPE_PP, GPIO_OSPEED_LOW, NRST_PIN);
 	gpio_set(NRST_PORT, NRST_PIN);
+	// Power
+	gpio_set_output_options(PWR_BR_PORT, GPIO_OTYPE_OD, GPIO_OSPEED_LOW, PWR_BR_PIN);
+	gpio_set(PWR_BR_PORT, PWR_BR_PIN);
+	gpio_mode_setup(PWR_BR_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, PWR_BR_PIN);
 	// LED
 	gpio_mode_setup(LED_PORT, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE,
 					LED_UART | LED_IDLE_RUN | LED_ERROR | LED_BOOTLOADER);
@@ -118,24 +122,39 @@ const char *platform_target_voltage(void)
 {
 	static char ret[] = "0.0V";
 	uint32_t val = platform_target_voltage_sense();
-	ret[0] = '0' + val / 10;
-	ret[2] = '0' + val % 10;
-
+	if (val > 60) {
+		ret[0] = 'x';
+		ret[2] = 'x';
+	} else {
+		ret[0] = '0' + val / 10;
+		ret[2] = '0' + val % 10;
+	}
 	return ret;
 }
 
 void platform_request_boot(void)
 {
 	/* Bootloader cares for reenumeration */
-	uint32_t *magic = (uint32_t *) &_ebss;
-	magic[0] = BOOTMAGIC0;
-	magic[1] = BOOTMAGIC1;
 	scb_reset_system();
 }
 
 void platform_target_clk_output_enable(bool enable)
 {
 	(void)enable;
+}
+
+bool platform_target_get_power(void) 
+{
+	return !gpio_get(PWR_BR_PORT, PWR_BR_PIN);
+}
+
+void platform_target_set_power(bool power)
+{
+	if (power) {
+		gpio_clear(PWR_BR_PORT, PWR_BR_PIN);
+	} else {
+		gpio_set(PWR_BR_PORT, PWR_BR_PIN);
+	}
 }
 
 static void adc_init(void)
@@ -148,6 +167,6 @@ static void adc_init(void)
 		__asm__("nop");
 	adc_power_off(ADC1);
 	adc_calibrate(ADC1);
-	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_247DOT5CYC);
+	adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_92DOT5CYC);
 	adc_power_on(ADC1);
 }
